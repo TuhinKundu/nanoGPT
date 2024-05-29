@@ -28,10 +28,13 @@ from torch.nn.parallel import DistributedDataParallel as DDP
 from torch.distributed import init_process_group, destroy_process_group
 
 from model import GPTConfig, GPT
-
+from MoD import add_MoD
+import fvcore.nn as FVC
 # -----------------------------------------------------------------------------
 # default config values designed to train a gpt2 (124M) on OpenWebText
 # I/O
+
+
 out_dir = 'out'
 eval_interval = 2000
 log_interval = 1
@@ -72,6 +75,8 @@ backend = 'nccl' # 'nccl', 'gloo', etc.
 device = 'cuda' # examples: 'cpu', 'cuda', 'cuda:0', 'cuda:1' etc., or try 'mps' on macbooks
 dtype = 'bfloat16' if torch.cuda.is_available() and torch.cuda.is_bf16_supported() else 'float16' # 'float32', 'bfloat16', or 'float16', the latter will auto implement a GradScaler
 compile = True # use PyTorch 2.0 to compile the model to be faster
+mod = False #mixture of depth on transformer layers
+skip_factor = 0.5 # factor to choose percentage of tokens in a sequence for next layer in mixture of depth
 # -----------------------------------------------------------------------------
 config_keys = [k for k,v in globals().items() if not k.startswith('_') and isinstance(v, (int, float, bool, str))]
 exec(open('configurator.py').read()) # overrides from command line or config file
@@ -190,6 +195,18 @@ elif init_from.startswith('gpt2'):
 if block_size < model.config.block_size:
     model.crop_block_size(block_size)
     model_args['block_size'] = block_size # so that the checkpoint will have the right value
+
+
+if mod:
+    model = add_MoD(model, n_embd, is_train=True, skip_factor=skip_factor)
+
+#print model architecture and flop count per layer
+print(model.transformer.h)
+flops = FVC.FlopCountAnalysis(model, torch.randint(high=1, size=(batch_size, block_size)))
+print(FVC.flop_count_table(flops))
+
+
+
 model.to(device)
 
 # initialize a GradScaler. If enabled=False scaler is a no-op
@@ -301,6 +318,7 @@ while True:
             loss = loss / gradient_accumulation_steps # scale the loss to account for gradient accumulation
         # immediately async prefetch next batch while model is doing the forward pass on the GPU
         X, Y = get_batch('train')
+
         # backward pass, with gradient scaling if training in fp16
         scaler.scale(loss).backward()
     # clip the gradient
@@ -317,6 +335,7 @@ while True:
     t1 = time.time()
     dt = t1 - t0
     t0 = t1
+
     if iter_num % log_interval == 0 and master_process:
         # get loss as float. note: this is a CPU-GPU sync point
         # scale up to undo the division above, approximating the true total loss (exact would have been a sum)
