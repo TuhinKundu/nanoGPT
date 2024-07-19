@@ -1,3 +1,7 @@
+## Edits 
+
+Mixture of depth [arxiv](https://arxiv.org/abs/2404.02258) implementation added to nanoGPT [code added here](https://github.com/TuhinKundu/nanoGPT/commit/1a8847d8a7ec75962fd2a65f9b1d9dc46f72b80a).
+
 
 # nanoGPT
 
